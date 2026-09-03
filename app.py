@@ -1,373 +1,702 @@
+
 import streamlit as st
-import matplotlib.pyplot as plt
+import sqlite3
+import pandas as pd
+from datetime import date, datetime
+
+DATABASE = "assignments.db"
+
+
+def get_connection():
+    return sqlite3.connect(
+        DATABASE,
+        check_same_thread=False
+    )
+
+
+def create_database():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            deadline TEXT NOT NULL,
+            weight REAL DEFAULT 0,
+            priority TEXT NOT NULL,
+            status TEXT NOT NULL,
+            notes TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+create_database()
+
+
+def add_assignment(
+    title,
+    subject,
+    deadline,
+    weight,
+    priority,
+    status,
+    notes
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO assignments
+        (title, subject, deadline, weight, priority, status, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        title,
+        subject,
+        deadline.isoformat(),
+        weight,
+        priority,
+        status,
+        notes,
+        datetime.now().isoformat()
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def get_assignments():
+    conn = get_connection()
+
+    df = pd.read_sql_query(
+        "SELECT * FROM assignments ORDER BY deadline ASC",
+        conn
+    )
+
+    conn.close()
+
+    return df
+
+
+def delete_assignment(assignment_id):
+    conn = get_connection()
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "DELETE FROM assignments WHERE id = ?",
+        (assignment_id,)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_assignment(
+    assignment_id,
+    title,
+    subject,
+    deadline,
+    weight,
+    priority,
+    status,
+    notes
+):
+    conn = get_connection()
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE assignments
+        SET
+            title = ?,
+            subject = ?,
+            deadline = ?,
+            weight = ?,
+            priority = ?,
+            status = ?,
+            notes = ?
+        WHERE id = ?
+    """, (
+        title,
+        subject,
+        deadline.isoformat(),
+        weight,
+        priority,
+        status,
+        notes,
+        assignment_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def update_status(assignment_id, status):
+    conn = get_connection()
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE assignments
+        SET status = ?
+        WHERE id = ?
+    """, (
+        status,
+        assignment_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def calculate_days_remaining(deadline):
+    return (deadline - date.today()).days
+
+
+def priority_icon(priority):
+    if priority == "High":
+        return "🔴 High"
+    elif priority == "Medium":
+        return "🟠 Medium"
+    return "🟢 Low"
 
 
 # ============================================================
-# Page Configuration
+# PAGE
 # ============================================================
 
 st.set_page_config(
-    page_title="BMI Calculator",
-    page_icon="⚖️",
-    layout="centered"
+    page_title="Assignment Manager",
+    page_icon="📚",
+    layout="wide"
+)
+
+st.title("📚 Assignment & Deadline Manager")
+
+st.sidebar.title("Navigation")
+
+page = st.sidebar.radio(
+    "Go to",
+    [
+        "📊 Dashboard",
+        "📝 Assignments",
+        "➕ Add Assignment",
+        "✏️ Edit Assignment"
+    ]
 )
 
 
 # ============================================================
-# BMI Calculation Function
+# LOAD DATA
 # ============================================================
 
-def calculate_bmi(weight, height):
-    # Convert height from cm to meters
-    height_m = height / 100
+df = get_assignments()
 
-    # Calculate BMI
-    bmi = weight / (height_m ** 2)
+if not df.empty:
 
-    # Calculate healthy weight range
-    min_normal_weight = 18.5 * (height_m ** 2)
-    max_normal_weight = 24.9 * (height_m ** 2)
+    df["deadline"] = pd.to_datetime(
+        df["deadline"]
+    ).dt.date
 
-    # Determine BMI category and advice
-    if bmi < 18.5:
-        category = "Underweight"
+    df["days_remaining"] = df["deadline"].apply(
+        calculate_days_remaining
+    )
 
-        weight_change = min_normal_weight - weight
 
-        recommendation = (
-            f"You could aim to gain approximately "
-            f"{weight_change:.1f} kg to reach a BMI of 18.5."
-        )
+# ============================================================
+# DASHBOARD
+# ============================================================
 
-        advice = (
-            "You are below the normal BMI range. "
-            "Try eating nutritious, calorie-dense foods such as "
-            "eggs, dairy products, nuts, rice, meat, and whole grains. "
-            "Strength training may also help build healthy muscle."
-        )
+if page == "📊 Dashboard":
 
-    elif bmi < 25:
-        category = "Normal Weight"
+    st.header("📊 Dashboard")
 
-        recommendation = (
-            f"Your estimated healthy weight range is "
-            f"{min_normal_weight:.1f}–{max_normal_weight:.1f} kg. "
-            f"You are currently within this range."
-        )
+    if df.empty:
 
-        advice = (
-            "Your BMI is within the normal range. "
-            "Keep maintaining a balanced diet, exercise regularly, "
-            "stay hydrated, and get enough sleep."
-        )
-
-    elif bmi < 30:
-        category = "Overweight"
-
-        weight_change = weight - max_normal_weight
-
-        recommendation = (
-            f"You could aim to lose approximately "
-            f"{weight_change:.1f} kg to reach a BMI of 24.9."
-        )
-
-        advice = (
-            "Your BMI is above the normal range. "
-            "Consider increasing physical activity and eating a "
-            "balanced diet containing vegetables, fruits, whole grains, "
-            "and lean proteins. Focus on gradual and sustainable changes."
+        st.info(
+            "You don't have any assignments yet."
         )
 
     else:
-        category = "Obese"
 
-        weight_change = weight - max_normal_weight
+        total = len(df)
 
-        recommendation = (
-            f"You could aim to lose approximately "
-            f"{weight_change:.1f} kg to reach a BMI of 24.9."
+        completed = len(
+            df[df["status"] == "Completed"]
         )
 
-        advice = (
-            "Your BMI is in the obesity range. "
-            "Consider gradually increasing physical activity and "
-            "choosing nutrient-dense foods. A healthcare professional "
-            "can help create a safe and personalized weight-management plan."
+        overdue = len(
+            df[
+                (df["days_remaining"] < 0)
+                &
+                (df["status"] != "Completed")
+            ]
         )
 
-    return (
-        bmi,
-        category,
-        min_normal_weight,
-        max_normal_weight,
-        recommendation,
-        advice
-    )
-
-
-# ============================================================
-# BMI Graph
-# ============================================================
-
-def create_bmi_graph(bmi):
-
-    fig, ax = plt.subplots(figsize=(10, 3))
-
-    # Maximum BMI displayed on graph
-    graph_max = 40
-
-    # --------------------------------------------------------
-    # Color-coded BMI sections
-    # --------------------------------------------------------
-
-    # Underweight: 0 - 18.5
-    ax.barh(
-        0,
-        18.5,
-        left=0,
-        height=0.5,
-        color="skyblue"
-    )
-
-    # Normal: 18.5 - 25
-    ax.barh(
-        0,
-        6.5,
-        left=18.5,
-        height=0.5,
-        color="green"
-    )
-
-    # Overweight: 25 - 30
-    ax.barh(
-        0,
-        5,
-        left=25,
-        height=0.5,
-        color="orange"
-    )
-
-    # Obese: 30 - 40
-    ax.barh(
-        0,
-        10,
-        left=30,
-        height=0.5,
-        color="red"
-    )
-
-    # --------------------------------------------------------
-    # BMI Arrow
-    # --------------------------------------------------------
-
-    # Keep BMI marker inside graph
-    marker_position = min(max(bmi, 0), graph_max)
-
-    ax.annotate(
-        f"BMI: {bmi:.1f}",
-        xy=(marker_position, 0.25),
-        xytext=(marker_position, 0.85),
-        ha="center",
-        va="bottom",
-        fontsize=13,
-        fontweight="bold",
-        arrowprops=dict(
-            arrowstyle="->",
-            linewidth=3,
-            color="black"
+        due_soon = len(
+            df[
+                (df["days_remaining"].between(0, 3))
+                &
+                (df["status"] != "Completed")
+            ]
         )
-    )
 
-    # --------------------------------------------------------
-    # Category Labels
-    # --------------------------------------------------------
+        col1, col2, col3, col4 = st.columns(4)
 
-    ax.text(
-        9.25,
-        0,
-        "Underweight",
-        ha="center",
-        va="center",
-        fontsize=10,
-        fontweight="bold"
-    )
+        col1.metric(
+            "📚 Total",
+            total
+        )
 
-    ax.text(
-        21.75,
-        0,
-        "Normal",
-        ha="center",
-        va="center",
-        fontsize=10,
-        fontweight="bold"
-    )
+        col2.metric(
+            "⏰ Due Soon",
+            due_soon
+        )
 
-    ax.text(
-        27.5,
-        0,
-        "Overweight",
-        ha="center",
-        va="center",
-        fontsize=10,
-        fontweight="bold"
-    )
+        col3.metric(
+            "🔴 Overdue",
+            overdue
+        )
 
-    ax.text(
-        35,
-        0,
-        "Obese",
-        ha="center",
-        va="center",
-        fontsize=10,
-        fontweight="bold"
-    )
+        col4.metric(
+            "✅ Completed",
+            completed
+        )
 
-    # --------------------------------------------------------
-    # Graph Formatting
-    # --------------------------------------------------------
+        st.divider()
 
-    ax.set_xlim(0, graph_max)
-    ax.set_ylim(-0.6, 1.1)
+        # Progress
 
-    ax.set_xlabel("BMI", fontsize=11)
+        progress = completed / total
 
-    ax.set_yticks([])
+        st.subheader("🎯 Completion Progress")
 
-    ax.set_title(
-        "BMI Classification",
-        fontsize=14,
-        fontweight="bold"
-    )
+        st.progress(progress)
 
-    # Remove unnecessary borders
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_visible(False)
+        st.write(
+            f"{completed}/{total} assignments completed "
+            f"({progress * 100:.1f}%)"
+        )
 
-    plt.tight_layout()
+        st.divider()
 
-    return fig
+        # Upcoming
 
+        st.subheader("⏰ Upcoming Deadlines")
 
-# ============================================================
-# Streamlit Application
-# ============================================================
+        upcoming = df[
+            (df["days_remaining"] >= 0)
+            &
+            (df["status"] != "Completed")
+        ].sort_values(
+            "deadline"
+        ).head(5)
 
-st.title("⚖️ BMI Calculator")
+        if upcoming.empty:
 
-st.write(
-    "Adjust your weight and height using the sliders "
-    "to calculate your BMI and see where you fall "
-    "on the BMI classification scale."
-)
+            st.success(
+                "🎉 No upcoming assignments!"
+            )
 
+        else:
 
-# ============================================================
-# Input Sliders
-# ============================================================
+            for _, row in upcoming.iterrows():
 
-weight = st.slider(
-    "Weight (kg)",
-    min_value=30.0,
-    max_value=200.0,
-    value=70.0,
-    step=0.5
-)
+                days = row["days_remaining"]
 
-height = st.slider(
-    "Height (cm)",
-    min_value=100,
-    max_value=220,
-    value=170,
-    step=1
-)
+                if days == 0:
+                    deadline_text = "Due today"
+                elif days == 1:
+                    deadline_text = "Due tomorrow"
+                else:
+                    deadline_text = f"Due in {days} days"
+
+                st.markdown(
+                    f"""
+                    ### {row['title']}
+
+                    📚 {row['subject']}  
+                    📅 {row['deadline'].strftime('%d %B %Y')}  
+                    ⏰ **{deadline_text}**  
+                    {priority_icon(row['priority'])}
+                    """
+                )
+
+                st.divider()
+
+        # Subject chart
+
+        st.subheader("📚 Assignments by Subject")
+
+        subject_counts = df["subject"].value_counts()
+
+        st.bar_chart(subject_counts)
 
 
 # ============================================================
-# Calculate Results
+# ASSIGNMENTS
 # ============================================================
 
-(
-    bmi,
-    category,
-    min_normal_weight,
-    max_normal_weight,
-    recommendation,
-    advice
-) = calculate_bmi(weight, height)
+elif page == "📝 Assignments":
+
+    st.header("📝 My Assignments")
+
+    if df.empty:
+
+        st.info("No assignments found.")
+
+    else:
+
+        subjects = [
+            "All"
+        ] + sorted(
+            df["subject"].unique().tolist()
+        )
+
+        selected_subject = st.selectbox(
+            "Filter by subject",
+            subjects
+        )
+
+        selected_status = st.selectbox(
+            "Filter by status",
+            [
+                "All",
+                "Not Started",
+                "In Progress",
+                "Completed"
+            ]
+        )
+
+        filtered = df.copy()
+
+        if selected_subject != "All":
+
+            filtered = filtered[
+                filtered["subject"]
+                == selected_subject
+            ]
+
+        if selected_status != "All":
+
+            filtered = filtered[
+                filtered["status"]
+                == selected_status
+            ]
+
+        for _, row in filtered.iterrows():
+
+            with st.container(border=True):
+
+                st.subheader(row["title"])
+
+                st.write(
+                    f"📚 **Subject:** {row['subject']}"
+                )
+
+                st.write(
+                    f"📅 **Deadline:** "
+                    f"{row['deadline'].strftime('%d %B %Y')}"
+                )
+
+                days = row["days_remaining"]
+
+                if row["status"] == "Completed":
+
+                    st.success("✅ Completed")
+
+                elif days < 0:
+
+                    st.error(
+                        f"🔴 {abs(days)} days overdue"
+                    )
+
+                elif days == 0:
+
+                    st.error("🔴 Due today")
+
+                elif days == 1:
+
+                    st.warning("🟠 Due tomorrow")
+
+                else:
+
+                    st.info(
+                        f"🟢 {days} days remaining"
+                    )
+
+                st.write(
+                    priority_icon(row["priority"])
+                )
+
+                st.write(
+                    f"Assignment weight: "
+                    f"{row['weight']:.1f}%"
+                )
+
+                if row["notes"]:
+
+                    st.write(
+                        f"📝 {row['notes']}"
+                    )
+
+                new_status = st.selectbox(
+                    "Status",
+                    [
+                        "Not Started",
+                        "In Progress",
+                        "Completed"
+                    ],
+                    index=[
+                        "Not Started",
+                        "In Progress",
+                        "Completed"
+                    ].index(row["status"]),
+                    key=f"status_{row['id']}"
+                )
+
+                if new_status != row["status"]:
+
+                    update_status(
+                        row["id"],
+                        new_status
+                    )
+
+                    st.rerun()
 
 
 # ============================================================
-# Results
+# ADD ASSIGNMENT
 # ============================================================
 
-st.subheader("Your Results")
+elif page == "➕ Add Assignment":
 
-col1, col2 = st.columns(2)
+    st.header("➕ Add Assignment")
 
-with col1:
-    st.metric(
-        "BMI",
-        f"{bmi:.2f}"
-    )
+    with st.form("assignment_form"):
 
-with col2:
-    st.metric(
-        "BMI Category",
-        category
-    )
+        title = st.text_input(
+            "Assignment name",
+            placeholder="e.g. Economics Essay"
+        )
+
+        subject = st.text_input(
+            "Subject / Course",
+            placeholder="e.g. Economics"
+        )
+
+        deadline = st.date_input(
+            "Deadline",
+            value=date.today()
+        )
+
+        weight = st.number_input(
+            "Assignment weight (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=10.0,
+            step=0.5
+        )
+
+        priority = st.selectbox(
+            "Priority",
+            [
+                "High",
+                "Medium",
+                "Low"
+            ]
+        )
+
+        status = st.selectbox(
+            "Status",
+            [
+                "Not Started",
+                "In Progress",
+                "Completed"
+            ]
+        )
+
+        notes = st.text_area(
+            "Notes"
+        )
+
+        submit = st.form_submit_button(
+            "➕ Add Assignment",
+            use_container_width=True
+        )
+
+        if submit:
+
+            if not title.strip():
+
+                st.error(
+                    "Please enter an assignment name."
+                )
+
+            elif not subject.strip():
+
+                st.error(
+                    "Please enter a subject."
+                )
+
+            else:
+
+                add_assignment(
+                    title,
+                    subject,
+                    deadline,
+                    weight,
+                    priority,
+                    status,
+                    notes
+                )
+
+                st.success(
+                    "✅ Assignment added!"
+                )
+
+                st.rerun()
 
 
 # ============================================================
-# Healthy Weight Range
+# EDIT ASSIGNMENT
 # ============================================================
 
-st.subheader("Estimated Healthy Weight Range")
+elif page == "✏️ Edit Assignment":
 
-st.info(
-    f"{min_normal_weight:.1f} kg – "
-    f"{max_normal_weight:.1f} kg"
-)
+    st.header("✏️ Edit Assignment")
 
+    if df.empty:
 
-# ============================================================
-# Recommended Weight Change
-# ============================================================
+        st.info(
+            "There are no assignments to edit."
+        )
 
-st.subheader("Recommended Weight Change")
+    else:
 
-st.write(recommendation)
+        options = {}
 
+        for _, row in df.iterrows():
 
-# ============================================================
-# Advice
-# ============================================================
+            options[
+                f"{row['title']} — {row['subject']}"
+            ] = row["id"]
 
-st.subheader("Advice")
+        selected = st.selectbox(
+            "Select assignment",
+            list(options.keys())
+        )
 
-st.write(advice)
+        assignment_id = options[selected]
 
+        assignment = df[
+            df["id"] == assignment_id
+        ].iloc[0]
 
-# ============================================================
-# BMI Graph
-# ============================================================
+        with st.form("edit_form"):
 
-st.subheader("BMI Classification")
+            title = st.text_input(
+                "Assignment name",
+                value=assignment["title"]
+            )
 
-fig = create_bmi_graph(bmi)
+            subject = st.text_input(
+                "Subject",
+                value=assignment["subject"]
+            )
 
-st.pyplot(fig)
+            deadline = st.date_input(
+                "Deadline",
+                value=assignment["deadline"]
+            )
 
-plt.close(fig)
+            weight = st.number_input(
+                "Assignment weight (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(assignment["weight"]),
+                step=0.5
+            )
 
+            priority = st.selectbox(
+                "Priority",
+                [
+                    "High",
+                    "Medium",
+                    "Low"
+                ],
+                index=[
+                    "High",
+                    "Medium",
+                    "Low"
+                ].index(
+                    assignment["priority"]
+                )
+            )
 
-# ============================================================
-# Disclaimer
-# ============================================================
+            status = st.selectbox(
+                "Status",
+                [
+                    "Not Started",
+                    "In Progress",
+                    "Completed"
+                ],
+                index=[
+                    "Not Started",
+                    "In Progress",
+                    "Completed"
+                ].index(
+                    assignment["status"]
+                )
+            )
 
-st.caption(
-    "Note: BMI is a screening measure and does not directly "
-    "measure body fat or overall health. The recommended weight "
-    "change shown here is a mathematical estimate based on BMI "
-    "and should not be considered personalized medical advice."
-)
+            notes = st.text_area(
+                "Notes",
+                value=assignment["notes"] or ""
+            )
+
+            save = st.form_submit_button(
+                "💾 Save Changes",
+                use_container_width=True
+            )
+
+            if save:
+
+                update_assignment(
+                    assignment_id,
+                    title,
+                    subject,
+                    deadline,
+                    weight,
+                    priority,
+                    status,
+                    notes
+                )
+
+                st.success(
+                    "✅ Assignment updated!"
+                )
+
+                st.rerun()
+
+        st.divider()
+
+        if st.button(
+            "🗑️ Delete Assignment"
+        ):
+
+            delete_assignment(
+                assignment_id
+            )
+
+            st.success(
+                "Assignment deleted."
+            )
+
+            st.rerun()
